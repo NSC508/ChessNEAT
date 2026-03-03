@@ -1,0 +1,14 @@
+name: ChessNEAT
+channels:
+  - defaults
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pytorch::pytorch
+  - pytorch::pytorch-cuda=12.4
+  - pip:
+    - neat-python
+    - python-chess
