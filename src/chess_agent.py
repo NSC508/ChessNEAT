@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import chess
 from neat.graphs import feed_forward_layers
-from board_encoder import encode_board, encode_boards_batch
+from board_encoder import encode_board
 
 class TorchNEATNetwork:
     """
@@ -18,18 +18,27 @@ class TorchNEATNetwork:
         
         connections = [cg for cg in genome.connections.values() if cg.enabled]
         conn_tuples = [cg.key for cg in connections]
-        layers = feed_forward_layers(input_nodes, output_nodes, conn_tuples)
+        result = feed_forward_layers(input_nodes, output_nodes, conn_tuples)
+        # feed_forward_layers may return (layers, required) or just layers
+        if isinstance(result, tuple):
+            layers, _ = result
+        else:
+            layers = result
         
         self.node_to_idx = {n: i for i, n in enumerate(input_nodes)}
         
-        req_nodes = set(n for l in layers for n in l)
+        # Each layer is a set of node ids — flatten them
+        req_nodes = set()
+        for l in layers:
+            for n in l:
+                req_nodes.add(n)
         for n in req_nodes:
             if n not in self.node_to_idx:
                 self.node_to_idx[n] = len(self.node_to_idx)
                 
         self.total_nodes = len(self.node_to_idx)
         self.input_size = len(input_nodes)
-        self.output_idx = [self.node_to_idx[n] for n in output_nodes]
+        self.output_idx = [self.node_to_idx[n] for n in output_nodes if n in self.node_to_idx]
         
         self.layers = []
         for layer in layers:
@@ -53,67 +62,112 @@ class TorchNEATNetwork:
                     
             self.layers.append((src_indices, dst_indices, W, b))
             
-    @torch.no_grad()
     def activate(self, inputs):
         """
-        inputs: (batch_size, num_inputs) tensor
+        inputs: (batch_size, num_inputs) tensor or (num_inputs,) tensor
         returns: (batch_size, num_outputs) tensor
         """
-        batch_size = inputs.shape[0]
-        values = torch.zeros((batch_size, self.total_nodes), device=self.device)
-        values[:, :self.input_size] = inputs
-        
-        for src_indices, dst_indices, W, b in self.layers:
-            src_vals = values[:, src_indices]
-            out = torch.matmul(src_vals, W.t()) + b
-            values[:, dst_indices] = torch.tanh(out) # Since config uses tanh
+        with torch.no_grad():
+            if inputs.dim() == 1:
+                inputs = inputs.unsqueeze(0)
+            batch_size = inputs.shape[0]
+            values = torch.zeros((batch_size, self.total_nodes), device=self.device)
+            values[:, :self.input_size] = inputs
             
-        return values[:, self.output_idx]
+            for src_indices, dst_indices, W, b in self.layers:
+                src_vals = values[:, src_indices]
+                out = torch.matmul(src_vals, W.t()) + b
+                values[:, dst_indices] = torch.tanh(out)
+                
+            return values[:, self.output_idx]
+
+    def activate_full(self, inputs):
+        """
+        Like activate(), but returns activations for ALL nodes (not just outputs).
+        Returns a dict mapping NEAT node ID -> activation value (for a single input).
+        Useful for visualization.
+        """
+        with torch.no_grad():
+            if inputs.dim() == 1:
+                inputs = inputs.unsqueeze(0)
+            values = torch.zeros((1, self.total_nodes), device=self.device)
+            values[:, :self.input_size] = inputs
+            
+            for src_indices, dst_indices, W, b in self.layers:
+                src_vals = values[:, src_indices]
+                out = torch.matmul(src_vals, W.t()) + b
+                values[:, dst_indices] = torch.tanh(out)
+            
+            # Build reverse mapping: idx -> neat node id
+            idx_to_node = {v: k for k, v in self.node_to_idx.items()}
+            activations = {}
+            vals_cpu = values[0].cpu().numpy()
+            for idx, node_id in idx_to_node.items():
+                activations[node_id] = float(vals_cpu[idx])
+            
+            return activations
 
 
 class ChessAgent:
+    """
+    Policy-network chess agent.
+    
+    The network has 128 outputs:
+      - outputs[0:64]  = "from square" scores  (one per square a1..h8)
+      - outputs[64:128] = "to square" scores    (one per square a1..h8)
+    
+    Move selection: ONE forward pass on the current board, then score
+    each legal move as:  from_score[move.from_sq] + to_score[move.to_sq]
+    Pick the legal move with the highest combined score.
+    
+    This is ~30x faster than the old value-network approach which required
+    a separate forward pass for every legal move.
+    """
+    
     def __init__(self, genome, config, device='cuda'):
         self.net = TorchNEATNetwork(genome, config, device=device)
         self.device = self.net.device
-        
-    def evaluate_positions(self, boards, perspective=chess.WHITE):
-        """
-        Batch evaluate multiple chess.Board objects.
-        """
-        if not boards:
-            return np.array([])
-            
-        vectors = encode_boards_batch(boards, perspective)
-        inputs = torch.tensor(vectors, device=self.device)
-        outputs = self.net.activate(inputs).cpu().numpy()
-        return outputs.flatten()
+        self.num_outputs = config.genome_config.num_outputs
         
     def select_move(self, board):
         """
-        Simulates all legal moves, evaluates the resulting positions,
-        and returns the one with the highest score.
+        Single forward pass → pick the best legal move.
         """
         legal_moves = list(board.legal_moves)
         if not legal_moves:
             return None
-            
-        next_boards = []
+        
+        # Encode current board from the perspective of the side to move
+        color = board.turn
+        board_vec = encode_board(board, perspective=color)
+        inputs = torch.tensor(board_vec, device=self.device)
+        
+        # ONE forward pass
+        outputs = self.net.activate(inputs).cpu().numpy().flatten()
+        
+        # Split into from-square and to-square scores
+        # outputs[0:64] = from-square scores, outputs[64:128] = to-square scores
+        from_scores = outputs[:64]
+        to_scores = outputs[64:128] if len(outputs) >= 128 else np.zeros(64)
+        
+        # Score each legal move
+        best_move = None
+        best_score = float('-inf')
+        
         for move in legal_moves:
-            b = board.copy()
-            b.push(move)
-            next_boards.append(b)
+            from_sq = move.from_square
+            to_sq = move.to_square
             
-        # The agent evaluates from its own perspective.
-        # If the agent is playing as White, it wants to maximize the score
-        # on the *resulting* board.
-        # However, the resulting board is evaluated from the perspective
-        # of the *current* player of that board (which would be the opponent).
-        # Actually, let's always evaluate the board from the agent's absolute color.
+            # If perspective is black, we need to mirror squares since
+            # the board encoding flips the board for black
+            if color == chess.BLACK:
+                from_sq = chess.square_mirror(from_sq)
+                to_sq = chess.square_mirror(to_sq)
+            
+            score = from_scores[from_sq] + to_scores[to_sq]
+            
+            if score > best_score:
+                best_score = score
+                best_move = move
         
-        color = board.turn # The agent is playing its turn right now
-        
-        scores = self.evaluate_positions(next_boards, perspective=color)
-        
-        # We want the max score.
-        best_idx = np.argmax(scores)
-        return legal_moves[best_idx]
+        return best_move

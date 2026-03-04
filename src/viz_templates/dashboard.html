@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChessNEAT — Training Dashboard</title>
+    <meta name="description" content="Live training visualization for ChessNEAT neural evolution">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+
+    <!-- jQuery (for chessboard.js) -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+    <!-- Chessboard.js -->
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+
+    <!-- D3.js for network visualization -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        /* ============================
+           CSS CUSTOM PROPERTIES
+           ============================ */
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --bg-card-hover: rgba(17, 24, 39, 0.9);
+            --border-color: rgba(99, 102, 241, 0.15);
+            --border-glow: rgba(99, 102, 241, 0.3);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-indigo: #818cf8;
+            --accent-purple: #a78bfa;
+            --accent-cyan: #22d3ee;
+            --accent-emerald: #34d399;
+            --accent-rose: #fb7185;
+            --accent-amber: #fbbf24;
+            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --gradient-success: linear-gradient(135deg, #34d399 0%, #059669 100%);
+            --gradient-danger: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
+            --gradient-network: linear-gradient(135deg, #22d3ee 0%, #818cf8 50%, #a78bfa 100%);
+            --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-color);
+            --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 20px;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        /* ============================
+           RESET & BASE
+           ============================ */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            font-size: 16px;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated gradient background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 80% 60% at 10% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse 60% 50% at 90% 80%, rgba(167, 139, 250, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse 50% 40% at 50% 50%, rgba(34, 211, 238, 0.04) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+            animation: bgShift 20s ease-in-out infinite alternate;
+        }
+
+        @keyframes bgShift {
+            0% {
+                opacity: 0.7;
+                transform: scale(1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1.05);
+            }
+        }
+
+        /* ============================
+           LAYOUT
+           ============================ */
+        .dashboard {
+            position: relative;
+            z-index: 1;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px 24px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: var(--gradient-primary);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .header h1 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header .subtitle {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-rose);
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: var(--accent-emerald);
+            box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.3);
+                opacity: 0.7;
+            }
+        }
+
+        /* Stats bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 16px 18px;
+            box-shadow: var(--shadow-card);
+            transition: transform 0.2s ease, border-color 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--border-glow);
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 1.6rem;
+            font-weight: 800;
+            font-family: var(--font-mono);
+            letter-spacing: -0.02em;
+        }
+
+        .stat-value.indigo {
+            color: var(--accent-indigo);
+        }
+
+        .stat-value.cyan {
+            color: var(--accent-cyan);
+        }
+
+        .stat-value.emerald {
+            color: var(--accent-emerald);
+        }
+
+        .stat-value.amber {
+            color: var(--accent-amber);
+        }
+
+        .stat-value.purple {
+            color: var(--accent-purple);
+        }
+
+        .stat-value.rose {
+            color: var(--accent-rose);
+        }
+
+        /* Main grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 20px;
+            min-height: 520px;
+        }
+
+        /* Glass panel */
+        .glass-panel {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel-title .icon {
+            font-size: 1rem;
+        }
+
+        .panel-badge {
+            font-size: 0.65rem;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+
+        .badge-live {
+            background: rgba(251, 113, 133, 0.15);
+            color: var(--accent-rose);
+            border: 1px solid rgba(251, 113, 133, 0.3);
+            animation: badgePulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes badgePulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
+        }
+
+        /* Chess board panel */
+        .board-panel {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .board-container {
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #chess-board {
+            width: 380px !important;
+            height: 380px !important;
+        }
+
+        #chess-board .board-b72b1 {
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Custom board colors */
+        .board-b72b1 .square-55d63 {
+            background-color: #e8dcc8;
+        }
+
+        .board-b72b1 .black-3c85d {
+            background-color: #7b8a9e;
+        }
+
+        /* Player info */
+        .players-info {
+            padding: 0 20px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .player-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+        }
+
+        .player-name {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .player-color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            border: 1.5px solid var(--text-muted);
+        }
+
+        .player-color-dot.white {
+            background: #fff;
+        }
+
+        .player-color-dot.black {
+            background: #1e293b;
+        }
+
+        .player-fitness {
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        /* Move history */
+        .move-history {
+            padding: 10px 20px 16px;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .move-history-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .moves-list {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            word-wrap: break-word;
+        }
+
+        .moves-list .move-number {
+            color: var(--text-muted);
+        }
+
+        .moves-list .last-move {
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        /* Network visualization panel */
+        .network-panel {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #network-svg {
+            width: 100%;
+            flex: 1;
+            min-height: 460px;
+        }
+
+        .network-legend {
+            padding: 10px 20px 14px;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.input {
+            background: var(--accent-cyan);
+        }
+
+        .legend-dot.hidden {
+            background: var(--accent-purple);
+        }
+
+        .legend-dot.output {
+            background: var(--accent-emerald);
+        }
+
+        .legend-line {
+            width: 20px;
+            height: 2px;
+            border-radius: 1px;
+        }
+
+        .legend-line.positive {
+            background: var(--accent-emerald);
+        }
+
+        .legend-line.negative {
+            background: var(--accent-rose);
+        }
+
+        /* Bottom row: fitness chart + log */
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        /* Fitness chart */
+        .chart-container {
+            padding: 20px;
+        }
+
+        #fitness-chart {
+            width: 100%;
+            height: 180px;
+        }
+
+        /* Training log */
+        .log-container {
+            padding: 16px 20px;
+            max-height: 230px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            color: var(--text-secondary);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .log-entry .log-time {
+            color: var(--text-muted);
+        }
+
+        .log-entry .log-gen {
+            color: var(--accent-indigo);
+            font-weight: 600;
+        }
+
+        .log-entry .log-fitness {
+            color: var(--accent-emerald);
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            min-height: 300px;
+            color: var(--text-muted);
+            gap: 12px;
+        }
+
+        .empty-state .empty-icon {
+            font-size: 3rem;
+            opacity: 0.4;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-8px);
+            }
+        }
+
+        .empty-state p {
+            font-size: 0.85rem;
+            max-width: 260px;
+            text-align: center;
+            line-height: 1.5;
+        }
+
+        /* Game result overlay */
+        .game-result-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(10, 14, 23, 0.85);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease;
+            border-radius: var(--radius-lg);
+        }
+
+        .game-result-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .game-result-text {
+            font-size: 1.3rem;
+            font-weight: 800;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .game-result-text .result-icon {
+            font-size: 2.5rem;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-glow);
+        }
+
+        /* Responsive */
+        @media (max-width: 1100px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .bottom-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="dashboard" id="dashboard">
+
+        <!-- ===== HEADER ===== -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo-icon">♞</div>
+                <div>
+                    <h1>ChessNEAT Training</h1>
+                    <div class="subtitle">Neural Evolution of Augmenting Topologies</div>
+                </div>
+            </div>
+            <div class="connection-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="connection-label">Connecting…</span>
+            </div>
+        </header>
+
+        <!-- ===== STATS BAR ===== -->
+        <div class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-label">Generation</div>
+                <div class="stat-value indigo" id="stat-generation">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Best Fitness</div>
+                <div class="stat-value emerald" id="stat-best-fitness">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Fitness</div>
+                <div class="stat-value cyan" id="stat-avg-fitness">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Species</div>
+                <div class="stat-value purple" id="stat-species">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Hidden Nodes</div>
+                <div class="stat-value amber" id="stat-hidden">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Connections</div>
+                <div class="stat-value rose" id="stat-connections">—</div>
+            </div>
+        </div>
+
+        <!-- ===== MAIN GRID: BOARD + NETWORK ===== -->
+        <div class="main-grid">
+            <!-- Chess Board -->
+            <div class="glass-panel board-panel" style="position:relative;">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="icon">♟</span> Showcase Game
+                    </div>
+                    <span class="panel-badge badge-live" id="game-badge">WAITING</span>
+                </div>
+                <div class="players-info" id="players-info" style="display:none;">
+                    <div class="player-row">
+                        <span class="player-name">
+                            <span class="player-color-dot white"></span>
+                            <span id="white-name">White</span>
+                        </span>
+                        <span class="player-fitness" id="white-fitness"></span>
+                    </div>
+                    <div class="player-row">
+                        <span class="player-name">
+                            <span class="player-color-dot black"></span>
+                            <span id="black-name">Black</span>
+                        </span>
+                        <span class="player-fitness" id="black-fitness"></span>
+                    </div>
+                </div>
+                <div class="board-container">
+                    <div id="chess-board"></div>
+                </div>
+                <div class="move-history">
+                    <div class="move-history-label">Move History</div>
+                    <div class="moves-list" id="moves-list">No moves yet.</div>
+                </div>
+                <!-- Result overlay -->
+                <div class="game-result-overlay" id="game-result-overlay">
+                    <div class="game-result-text" id="game-result-text"></div>
+                </div>
+            </div>
+
+            <!-- Network Visualization -->
+            <div class="glass-panel network-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="icon">🧠</span> Neural Network — Best Genome
+                    </div>
+                    <span class="panel-badge"
+                        style="background:rgba(130,140,248,0.15);color:var(--accent-indigo);border:1px solid rgba(130,140,248,0.3);"
+                        id="net-badge">NEAT</span>
+                </div>
+                <svg id="network-svg"></svg>
+                <div class="network-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot input"></div> Input Groups (12 piece channels)
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot hidden"></div> Hidden Nodes
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot output"></div> Output (From □ / To □)
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line positive"></div> Positive weight
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line negative"></div> Negative weight
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== BOTTOM: CHART + LOG ===== -->
+        <div class="bottom-grid">
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <div class="panel-title"><span class="icon">📈</span> Fitness Over Generations</div>
+                </div>
+                <div class="chart-container">
+                    <svg id="fitness-chart"></svg>
+                </div>
+            </div>
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <div class="panel-title"><span class="icon">📋</span> Training Log</div>
+                </div>
+                <div class="log-container" id="log-container"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ============================================================
+        //  Socket.IO Connection
+        // ============================================================
+        const socket = io();
+        const statusDot = document.getElementById('status-dot');
+        const connLabel = document.getElementById('connection-label');
+
+        socket.on('connect', () => {
+            statusDot.classList.add('connected');
+            connLabel.textContent = 'Connected';
+        });
+        socket.on('disconnect', () => {
+            statusDot.classList.remove('connected');
+            connLabel.textContent = 'Disconnected';
+        });
+
+        // ============================================================
+        //  Chess Board (chessboard.js)
+        // ============================================================
+        const boardConfig = {
+            position: 'start',
+            pieceTheme: 'https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/img/chesspieces/wikipedia/{piece}.png',
+            appearSpeed: 'fast',
+            moveSpeed: 150,
+            showNotation: true,
+        };
+        const board = Chessboard('chess-board', boardConfig);
+
+        let movesList = [];
+
+        socket.on('game_state', (data) => {
+            // Hide result overlay
+            document.getElementById('game-result-overlay').classList.remove('visible');
+
+            // Update board position
+            board.position(data.fen, true);
+
+            // Update badge
+            const badge = document.getElementById('game-badge');
+            badge.textContent = 'LIVE';
+            badge.className = 'panel-badge badge-live';
+
+            // Update player info
+            const playersInfo = document.getElementById('players-info');
+            playersInfo.style.display = '';
+            document.getElementById('white-name').textContent = data.white_name || 'White';
+            document.getElementById('black-name').textContent = data.black_name || 'Black';
+            if (data.white_fitness != null) {
+                document.getElementById('white-fitness').textContent = `fitness: ${data.white_fitness.toFixed(1)}`;
+            }
+            if (data.black_fitness != null) {
+                document.getElementById('black-fitness').textContent = `fitness: ${data.black_fitness.toFixed(1)}`;
+            }
+
+            // Update move list
+            if (data.move_san) {
+                movesList.push(data.move_san);
+                renderMoves();
+            }
+        });
+
+        socket.on('game_result', (data) => {
+            const overlay = document.getElementById('game-result-overlay');
+            const text = document.getElementById('game-result-text');
+
+            let icon = '🤝';
+            let label = 'Draw';
+            if (data.result === '1-0') { icon = '👑'; label = `${data.white_name} wins!`; }
+            else if (data.result === '0-1') { icon = '👑'; label = `${data.black_name} wins!`; }
+
+            text.innerHTML = `<span class="result-icon">${icon}</span>${label}<br><span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">after ${data.total_moves} moves</span>`;
+            overlay.classList.add('visible');
+
+            const badge = document.getElementById('game-badge');
+            badge.textContent = 'FINISHED';
+            badge.className = 'panel-badge';
+            badge.style.background = 'rgba(52,211,153,0.15)';
+            badge.style.color = 'var(--accent-emerald)';
+            badge.style.border = '1px solid rgba(52,211,153,0.3)';
+
+            // Reset move list for next game
+            setTimeout(() => { movesList = []; }, 4000);
+        });
+
+        function renderMoves() {
+            const el = document.getElementById('moves-list');
+            let html = '';
+            for (let i = 0; i < movesList.length; i++) {
+                if (i % 2 === 0) {
+                    html += `<span class="move-number">${Math.floor(i / 2) + 1}.</span> `;
+                }
+                const isLast = i === movesList.length - 1;
+                html += `<span class="${isLast ? 'last-move' : ''}">${movesList[i]}</span> `;
+            }
+            el.innerHTML = html;
+            el.parentElement.scrollTop = el.parentElement.scrollHeight;
+        }
+
+        // ============================================================
+        //  Stats
+        // ============================================================
+        const fitnessHistory = { best: [], avg: [], gens: [] };
+
+        socket.on('generation_start', (data) => {
+            document.getElementById('stat-generation').textContent = data.generation;
+            addLog(`Generation ${data.generation} started — pop ${data.pop_size}`);
+        });
+
+        socket.on('generation_end', (data) => {
+            document.getElementById('stat-generation').textContent = data.generation;
+            document.getElementById('stat-best-fitness').textContent = data.best_fitness.toFixed(1);
+            document.getElementById('stat-avg-fitness').textContent = data.avg_fitness.toFixed(1);
+            document.getElementById('stat-species').textContent = data.num_species;
+
+            fitnessHistory.gens.push(data.generation);
+            fitnessHistory.best.push(data.best_fitness);
+            fitnessHistory.avg.push(data.avg_fitness);
+            drawFitnessChart();
+
+            addLog(`Gen ${data.generation} done — best: ${data.best_fitness.toFixed(1)}, avg: ${data.avg_fitness.toFixed(1)}, species: ${data.num_species}`);
+
+            if (data.network) {
+                document.getElementById('stat-hidden').textContent = data.network.num_hidden;
+                document.getElementById('stat-connections').textContent = data.network.num_connections;
+                drawNetwork(data.network);
+            }
+        });
+
+        // ============================================================
+        //  Network Activations
+        // ============================================================
+        socket.on('network_activations', (data) => {
+            if (data.activations) {
+                updateNetworkActivations(data.activations);
+            }
+        });
+
+        // ============================================================
+        //  Training Log
+        // ============================================================
+        function addLog(message) {
+            const container = document.getElementById('log-container');
+            const now = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${now}]</span> ${message}`;
+            container.prepend(entry);
+
+            // Limit entries
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        // ============================================================
+        //  Fitness Chart (D3.js)
+        // ============================================================
+        function drawFitnessChart() {
+            const svg = d3.select('#fitness-chart');
+            svg.selectAll('*').remove();
+
+            const container = svg.node().parentElement;
+            const width = container.clientWidth;
+            const height = 180;
+            const margin = { top: 16, right: 16, bottom: 28, left: 50 };
+            const innerW = width - margin.left - margin.right;
+            const innerH = height - margin.top - margin.bottom;
+
+            svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+            const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+            if (fitnessHistory.gens.length < 2) {
+                g.append('text')
+                    .attr('x', innerW / 2).attr('y', innerH / 2)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', '#64748b')
+                    .attr('font-size', '0.8rem')
+                    .text('Waiting for data…');
+                return;
+            }
+
+            const xScale = d3.scaleLinear()
+                .domain([d3.min(fitnessHistory.gens), d3.max(fitnessHistory.gens)])
+                .range([0, innerW]);
+            const yMax = Math.max(d3.max(fitnessHistory.best), d3.max(fitnessHistory.avg), 1);
+            const yScale = d3.scaleLinear()
+                .domain([0, yMax * 1.1])
+                .range([innerH, 0]);
+
+            // Grid lines
+            g.append('g')
+                .attr('opacity', 0.1)
+                .call(d3.axisLeft(yScale).ticks(4).tickSize(-innerW).tickFormat(''));
+
+            // Axes
+            g.append('g')
+                .attr('transform', `translate(0,${innerH})`)
+                .call(d3.axisBottom(xScale).ticks(Math.min(fitnessHistory.gens.length, 10)).tickFormat(d3.format('d')))
+                .attr('color', '#4b5563')
+                .selectAll('text').attr('fill', '#64748b').attr('font-size', '0.65rem');
+
+            g.append('g')
+                .call(d3.axisLeft(yScale).ticks(4))
+                .attr('color', '#4b5563')
+                .selectAll('text').attr('fill', '#64748b').attr('font-size', '0.65rem');
+
+            // Avg fitness area + line
+            const avgArea = d3.area()
+                .x((d, i) => xScale(fitnessHistory.gens[i]))
+                .y0(innerH)
+                .y1((d) => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            g.append('path')
+                .datum(fitnessHistory.avg)
+                .attr('d', avgArea)
+                .attr('fill', 'url(#avgGradient)')
+                .attr('opacity', 0.3);
+
+            // Gradient def
+            const defs = svg.append('defs');
+            const avgGrad = defs.append('linearGradient').attr('id', 'avgGradient').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1);
+            avgGrad.append('stop').attr('offset', '0%').attr('stop-color', '#22d3ee');
+            avgGrad.append('stop').attr('offset', '100%').attr('stop-color', 'transparent');
+
+            // Lines
+            const bestLine = d3.line()
+                .x((d, i) => xScale(fitnessHistory.gens[i]))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+            const avgLine = d3.line()
+                .x((d, i) => xScale(fitnessHistory.gens[i]))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            g.append('path').datum(fitnessHistory.avg)
+                .attr('d', avgLine).attr('fill', 'none')
+                .attr('stroke', '#22d3ee').attr('stroke-width', 2).attr('opacity', 0.8);
+            g.append('path').datum(fitnessHistory.best)
+                .attr('d', bestLine).attr('fill', 'none')
+                .attr('stroke', '#34d399').attr('stroke-width', 2.5);
+
+            // Label
+            g.append('text').attr('x', innerW - 4).attr('y', yScale(fitnessHistory.best[fitnessHistory.best.length - 1]) - 6)
+                .attr('text-anchor', 'end').attr('fill', '#34d399').attr('font-size', '0.65rem').attr('font-weight', 600)
+                .text('Best');
+            g.append('text').attr('x', innerW - 4).attr('y', yScale(fitnessHistory.avg[fitnessHistory.avg.length - 1]) - 6)
+                .attr('text-anchor', 'end').attr('fill', '#22d3ee').attr('font-size', '0.65rem').attr('font-weight', 600)
+                .text('Avg');
+        }
+
+        // ============================================================
+        //  Neural Network Visualization (D3.js force-directed)
+        // ============================================================
+        let currentActivations = {};
+
+        function drawNetwork(netData) {
+            const svg = d3.select('#network-svg');
+            svg.selectAll('*').remove();
+
+            const container = svg.node().parentElement;
+            const width = container.clientWidth;
+            const height = Math.max(container.clientHeight - 80, 400);
+            svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+            const nodes = netData.nodes;
+            const edges = netData.edges;
+
+            if (nodes.length === 0) {
+                svg.append('text')
+                    .attr('x', width / 2).attr('y', height / 2)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', '#64748b')
+                    .attr('font-size', '0.85rem')
+                    .text('No hidden nodes yet — minimal network');
+                return;
+            }
+
+            // Position nodes in layers
+            // Input groups on left, hidden in middle, output on right
+            const inputNodes = nodes.filter(n => n.type === 'input_group');
+            const hiddenNodes = nodes.filter(n => n.type === 'hidden');
+            const outputNodes = nodes.filter(n => n.type === 'output' || n.type === 'output_group');
+
+            const marginX = 80;
+            const marginY = 40;
+            const usableW = width - marginX * 2;
+            const usableH = height - marginY * 2;
+
+            // Assign x positions by layer
+            const numLayers = hiddenNodes.length > 0 ? 3 : 2;
+            const layerSpacing = usableW / (numLayers + 1);
+
+            inputNodes.forEach((n, i) => {
+                n.fx = marginX + layerSpacing * 0.3;
+                n.fy = marginY + (i / Math.max(inputNodes.length - 1, 1)) * usableH;
+            });
+
+            if (hiddenNodes.length > 0) {
+                hiddenNodes.forEach((n, i) => {
+                    n.fx = marginX + layerSpacing * 1.5;
+                    n.fy = marginY + (i / Math.max(hiddenNodes.length - 1, 1)) * usableH;
+                });
+            }
+
+            outputNodes.forEach((n, i) => {
+                n.fx = marginX + layerSpacing * (numLayers - 0.3);
+                n.fy = marginY + (i / Math.max(outputNodes.length - 1, 1)) * usableH;
+            });
+
+            // Build D3 data: Map node ids (could be strings like "input_group_0" or ints) to indices
+            const nodeIdMap = new Map();
+            nodes.forEach((n, i) => nodeIdMap.set(n.id, i));
+
+            // Filter edges to only those whose source and target exist
+            const validEdges = edges.filter(e => nodeIdMap.has(e.source) && nodeIdMap.has(e.target));
+
+            // Defs: arrow markers and gradients
+            const defs = svg.append('defs');
+
+            // Glow filter
+            const filter = defs.append('filter').attr('id', 'glow');
+            filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
+            const feMerge = filter.append('feMerge');
+            feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+            feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+            // Draw edges
+            const edgeGroup = svg.append('g').attr('class', 'edges');
+            const edgeLines = edgeGroup.selectAll('line')
+                .data(validEdges)
+                .enter()
+                .append('line')
+                .attr('x1', d => nodes[nodeIdMap.get(d.source)].fx)
+                .attr('y1', d => nodes[nodeIdMap.get(d.source)].fy)
+                .attr('x2', d => nodes[nodeIdMap.get(d.target)].fx)
+                .attr('y2', d => nodes[nodeIdMap.get(d.target)].fy)
+                .attr('stroke', d => d.weight >= 0 ? '#34d399' : '#fb7185')
+                .attr('stroke-width', d => Math.min(Math.abs(d.weight) * 1.5, 4))
+                .attr('stroke-opacity', d => Math.min(0.2 + Math.abs(d.weight) * 0.15, 0.7))
+                .attr('class', 'edge-line');
+
+            // Draw nodes
+            const nodeGroup = svg.append('g').attr('class', 'nodes');
+
+            // Input group nodes (larger rectangles)
+            const inputG = nodeGroup.selectAll('.input-node')
+                .data(inputNodes)
+                .enter()
+                .append('g')
+                .attr('class', 'input-node')
+                .attr('transform', d => `translate(${d.fx}, ${d.fy})`);
+
+            inputG.append('rect')
+                .attr('x', -22).attr('y', -14)
+                .attr('width', 44).attr('height', 28)
+                .attr('rx', 6)
+                .attr('fill', 'rgba(34, 211, 238, 0.12)')
+                .attr('stroke', '#22d3ee')
+                .attr('stroke-width', 1.5)
+                .attr('class', 'node-shape');
+
+            inputG.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .attr('fill', '#22d3ee')
+                .attr('font-size', '14px')
+                .text(d => d.label);
+
+            // Hidden nodes (circles)
+            const hiddenG = nodeGroup.selectAll('.hidden-node')
+                .data(hiddenNodes)
+                .enter()
+                .append('g')
+                .attr('class', 'hidden-node')
+                .attr('transform', d => `translate(${d.fx}, ${d.fy})`);
+
+            hiddenG.append('circle')
+                .attr('r', 16)
+                .attr('fill', 'rgba(167, 139, 250, 0.12)')
+                .attr('stroke', '#a78bfa')
+                .attr('stroke-width', 1.5)
+                .attr('class', 'node-shape')
+                .attr('filter', 'url(#glow)');
+
+            hiddenG.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .attr('fill', '#a78bfa')
+                .attr('font-size', '0.65rem')
+                .attr('font-weight', 600)
+                .text(d => d.label);
+
+            // Output nodes — handle both individual 'output' and grouped 'output_group'
+            const outputGroupNodes = outputNodes.filter(n => n.type === 'output_group');
+            const outputSingleNodes = outputNodes.filter(n => n.type === 'output');
+
+            // Output groups (rectangles, like input groups but green)
+            const outputGroupG = nodeGroup.selectAll('.output-group-node')
+                .data(outputGroupNodes)
+                .enter()
+                .append('g')
+                .attr('class', 'output-node')
+                .attr('transform', d => `translate(${d.fx}, ${d.fy})`);
+
+            outputGroupG.append('rect')
+                .attr('x', -28).attr('y', -16)
+                .attr('width', 56).attr('height', 32)
+                .attr('rx', 8)
+                .attr('fill', 'rgba(52, 211, 153, 0.12)')
+                .attr('stroke', '#34d399')
+                .attr('stroke-width', 2)
+                .attr('class', 'node-shape')
+                .attr('filter', 'url(#glow)');
+
+            outputGroupG.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .attr('fill', '#34d399')
+                .attr('font-size', '0.75rem')
+                .attr('font-weight', 700)
+                .text(d => d.label);
+
+            // Single output nodes (circles, fallback)
+            const outputSingleG = nodeGroup.selectAll('.output-single-node')
+                .data(outputSingleNodes)
+                .enter()
+                .append('g')
+                .attr('class', 'output-node')
+                .attr('transform', d => `translate(${d.fx}, ${d.fy})`);
+
+            outputSingleG.append('circle')
+                .attr('r', 22)
+                .attr('fill', 'rgba(52, 211, 153, 0.12)')
+                .attr('stroke', '#34d399')
+                .attr('stroke-width', 2)
+                .attr('class', 'node-shape')
+                .attr('filter', 'url(#glow)');
+
+            outputSingleG.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .attr('fill', '#34d399')
+                .attr('font-size', '0.75rem')
+                .attr('font-weight', 700)
+                .text(d => d.label);
+
+            // Tooltips
+            nodeGroup.selectAll('g').append('title')
+                .text(d => {
+                    if (d.type === 'input_group') return `Input: ${d.label} (64 squares)`;
+                    if (d.type === 'hidden') return `Hidden node ${d.id}\nBias: ${d.bias?.toFixed(3)}`;
+                    if (d.type === 'output_group') return `Output: ${d.label} (64 square scores)`;
+                    return `Output node ${d.id}`;
+                });
+        }
+
+        function updateNetworkActivations(activations) {
+            currentActivations = activations;
+
+            // Update hidden node colors based on activation
+            d3.selectAll('.hidden-node circle.node-shape')
+                .attr('fill', function () {
+                    const parent = d3.select(this.parentNode);
+                    const data = parent.datum();
+                    const val = activations[String(data.id)];
+                    if (val === undefined) return 'rgba(167, 139, 250, 0.12)';
+                    const intensity = Math.abs(val);
+                    if (val >= 0) {
+                        return `rgba(52, 211, 153, ${0.1 + intensity * 0.6})`;
+                    } else {
+                        return `rgba(251, 113, 133, ${0.1 + intensity * 0.6})`;
+                    }
+                })
+                .attr('stroke', function () {
+                    const parent = d3.select(this.parentNode);
+                    const data = parent.datum();
+                    const val = activations[String(data.id)];
+                    if (val === undefined) return '#a78bfa';
+                    return val >= 0 ? '#34d399' : '#fb7185';
+                });
+
+            // Update output node
+            d3.selectAll('.output-node circle.node-shape')
+                .attr('fill', function () {
+                    const parent = d3.select(this.parentNode);
+                    const data = parent.datum();
+                    const val = activations[String(data.id)];
+                    if (val === undefined) return 'rgba(52, 211, 153, 0.12)';
+                    const intensity = Math.abs(val);
+                    if (val >= 0) {
+                        return `rgba(52, 211, 153, ${0.15 + intensity * 0.7})`;
+                    } else {
+                        return `rgba(251, 113, 133, ${0.15 + intensity * 0.7})`;
+                    }
+                });
+
+            // Update input groups — show aggregate activation
+            d3.selectAll('.input-node rect.node-shape')
+                .attr('fill', function () {
+                    const parent = d3.select(this.parentNode);
+                    const data = parent.datum();
+                    if (!data.node_ids) return 'rgba(34, 211, 238, 0.12)';
+                    let sum = 0;
+                    let count = 0;
+                    data.node_ids.forEach(nid => {
+                        const v = activations[String(nid)];
+                        if (v !== undefined) { sum += v; count++; }
+                    });
+                    if (count === 0) return 'rgba(34, 211, 238, 0.12)';
+                    const avg = sum / count;
+                    const intensity = Math.min(Math.abs(avg) * 5, 1);
+                    return `rgba(34, 211, 238, ${0.1 + intensity * 0.5})`;
+                });
+
+            // Animate edges based on activation flow
+            d3.selectAll('.edge-line')
+                .attr('stroke-opacity', function (d) {
+                    const srcVal = activations[String(d.original_src)] || activations[String(d.source)];
+                    if (srcVal === undefined) return 0.2;
+                    return Math.min(0.3 + Math.abs(srcVal) * 0.5, 0.9);
+                });
+        }
+
+        // ============================================================
+        //  Initial draw
+        // ============================================================
+        $(document).ready(() => {
+            drawFitnessChart();
+        });
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            drawFitnessChart();
+        });
+    </script>
+
+</body>
+
+</html>

@@ -35,7 +35,8 @@ def export_model(genome_path="models/best_genome.pkl", config_path="neat_config.
     print("DEBUG outputs:", output_nodes)
     print("DEBUG conn_tuples:", conn_tuples[:5])
     
-    layers = feed_forward_layers(input_nodes, output_nodes, conn_tuples)
+    result = feed_forward_layers(input_nodes, output_nodes, conn_tuples)
+    layers = result[0] if isinstance(result, tuple) else result
     
     # Export format:
     # {
@@ -48,6 +49,12 @@ def export_model(genome_path="models/best_genome.pkl", config_path="neat_config.
     
     model_json = {
         "num_inputs": len(input_nodes),
+        "num_outputs": len(output_nodes),
+        "network_type": "policy",  # 64 from-square + 64 to-square scores
+        "output_semantics": {
+            "from_squares": list(range(0, 64)),
+            "to_squares": list(range(64, 128)),
+        },
         "outputs": output_nodes,
         "layers": []
     }
